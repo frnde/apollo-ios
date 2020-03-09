@@ -12,7 +12,7 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
 
   private weak var fetching: Cancellable?
 
-  private var dependentKeys: Set<CacheKey>?
+  public var dependentKeys: Set<CacheKey>?
 
   /// Designated initializer
   ///
@@ -35,7 +35,7 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
     fetch(cachePolicy: .fetchIgnoringCacheData)
   }
 
-  func fetch(cachePolicy: CachePolicy) {
+  func fetch(cachePolicy: CachePolicy, completion: @escaping () -> Void = {}) {
     // Cancel anything already in flight before starting a new fetch
     fetching?.cancel()
     fetching = client?.fetch(query: query, cachePolicy: cachePolicy, context: &context, queue: .main) { [weak self] result in
@@ -49,6 +49,8 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
       }
 
       self.resultHandler(result)
+
+      completion()
     }
   }
 
@@ -58,15 +60,24 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
     client?.store.unsubscribe(self)
   }
 
-  func store(_ store: ApolloStore,
-             didChangeKeys changedKeys: Set<CacheKey>,
-             context: UnsafeMutableRawPointer?) {
-    if context == &self.context { return }
+  public func store(_ store: ApolloStore,
+                    didChangeKeys changedKeys: Set<CacheKey>,
+                    context: UnsafeMutableRawPointer?,
+                    completion: @escaping () -> Void) {
+    if context == &self.context {
+      completion()
+      return
+    }
 
-    guard let dependentKeys = dependentKeys else { return }
+    guard let dependentKeys = dependentKeys else {
+      completion()
+      return
+    }
 
     if !dependentKeys.isDisjoint(with: changedKeys) {
-      fetch(cachePolicy: .returnCacheDataElseFetch)
+      fetch(cachePolicy: .returnCacheDataElseFetch, completion: completion)
+    } else {
+      completion()
     }
   }
 }

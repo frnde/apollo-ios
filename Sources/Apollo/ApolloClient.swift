@@ -97,21 +97,24 @@ public class ApolloClient {
         return
       }
 
-      firstly {
-        try response.parseResult(cacheKeyForObject: self.cacheKeyForObject)
-        }.andThen { [weak self] (result, records) in
-          guard let self = self else {
-            return
+      firstly { try response.parseResult(cacheKeyForObject: self.cacheKeyForObject) }
+        .flatMap { [weak self] (result, records) -> Promise<Void> in
+          if let self = self, let records = records {
+            return self.store.publish(records: records, context: context)
+              .catch { error in
+                preconditionFailure(String(describing: error))
+              }
+              .andThen {
+                  resultHandler(.success(result))
+              }
+          } else {
+            resultHandler(.success(result))
+            return Promise(fulfilled: ())
           }
-          if let records = records {
-            self.store.publish(records: records, context: context).catch { error in
-              preconditionFailure(String(describing: error))
-            }
-          }
-          resultHandler(.success(result))
-        }.catch { error in
+        }
+        .catch { error in
           resultHandler(.failure(error))
-      }
+        }
     }
   }
 }

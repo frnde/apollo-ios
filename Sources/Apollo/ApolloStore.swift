@@ -2,7 +2,7 @@ import Dispatch
 
 /// A function that returns a cache key for a particular result object. If it returns `nil`, a default cache key based on the field path will be used.
 public typealias CacheKeyForObject = (_ object: JSONObject) -> JSONValue?
-public typealias DidChangeKeysFunc = (Set<CacheKey>, UnsafeMutableRawPointer?) -> Void
+public typealias DidChangeKeysFunc = (Set<CacheKey>, UnsafeMutableRawPointer?, @escaping () -> Void) -> Void
 
 func rootCacheKey<Operation: GraphQLOperation>(for operation: Operation) -> String {
   switch operation.operationType {
@@ -15,10 +15,11 @@ func rootCacheKey<Operation: GraphQLOperation>(for operation: Operation) -> Stri
   }
 }
 
-protocol ApolloStoreSubscriber: class {
+public protocol ApolloStoreSubscriber: class {
   func store(_ store: ApolloStore,
              didChangeKeys changedKeys: Set<CacheKey>,
-             context: UnsafeMutableRawPointer?)
+             context: UnsafeMutableRawPointer?,
+             completion: @escaping () -> Void)
 }
 
 /// The `ApolloStore` class acts as a local cache for normalized GraphQL results.
@@ -43,10 +44,17 @@ public final class ApolloStore {
     queue = DispatchQueue(label: "com.apollographql.ApolloStore", attributes: .concurrent)
   }
 
-  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>, context: UnsafeMutableRawPointer?) {
+  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>, context: UnsafeMutableRawPointer?, completion: @escaping () -> Void) {
+    let group = DispatchGroup()
+
     for subscriber in self.subscribers {
-      subscriber.store(self, didChangeKeys: changedKeys, context: context)
+      group.enter()
+      subscriber.store(self, didChangeKeys: changedKeys, context: context) {
+        group.leave()
+      }
     }
+
+    group.notify(queue: queue, execute: completion)
   }
 
   /// Clears the instance of the cache. Note that a cache can be shared across multiple `ApolloClient` objects, so clearing that underlying cache will clear it for all clients.
@@ -70,20 +78,21 @@ public final class ApolloStore {
         self.cacheLock.withWriteLock {
           self.cache.mergePromise(records: records)
         }.andThen { changedKeys in
-          self.didChangeKeys(changedKeys, context: context)
-          fulfill(())
+          self.didChangeKeys(changedKeys, context: context) {
+            fulfill(())
+          }
         }.wait()
       }
     }
   }
 
-  func subscribe(_ subscriber: ApolloStoreSubscriber) {
+  public func subscribe(_ subscriber: ApolloStoreSubscriber) {
     queue.async(flags: .barrier) {
       self.subscribers.append(subscriber)
     }
   }
 
-  func unsubscribe(_ subscriber: ApolloStoreSubscriber) {
+  public func unsubscribe(_ subscriber: ApolloStoreSubscriber) {
     queue.async(flags: .barrier) {
       self.subscribers = self.subscribers.filter({ $0 !== subscriber })
     }
@@ -328,11 +337,17 @@ public final class ApolloStore {
                                accumulator: normalizer)
       .flatMap {
         self.cache.mergePromise(records: $0)
-      }.andThen { changedKeys in
-        if let didChangeKeysFunc = self.updateChangedKeysFunc {
-          didChangeKeysFunc(changedKeys, nil)
+      }
+      .flatMap({ changedKeys -> Promise<Void> in
+        Promise { fulfill, _ in
+          if let didChangeKeysFunc = self.updateChangedKeysFunc {
+            didChangeKeysFunc(changedKeys, nil) { fulfill(())}
+          } else {
+            fulfill(())
+          }
         }
-      }.await()
+      })
+      .await()
     }
   }
 }
