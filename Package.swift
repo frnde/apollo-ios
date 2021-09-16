@@ -15,30 +15,30 @@ let package = Package(
     .library(
       name: "Apollo",
       targets: ["Apollo"]),
-    .library(
-      name: "ApolloAPI",
-      targets: ["ApolloAPI"]),
-    .library(
-      name: "ApolloUtils",
-      targets: ["ApolloUtils"]),
-    .library(
-      name: "Apollo-Dynamic",
-      type: .dynamic,
-      targets: ["Apollo"]),
-    .library(
-      name: "ApolloCodegenLib",
-      targets: ["ApolloCodegenLib"]),
+//    .library(
+//      name: "ApolloAPI",
+//      targets: ["ApolloAPI"]),
+//    .library(
+//      name: "ApolloUtils",
+//      targets: ["ApolloUtils"]),
+//    .library(
+//      name: "Apollo-Dynamic",
+//      type: .dynamic,
+//      targets: ["Apollo"]),
+//    .library(
+//      name: "ApolloCodegenLib",
+//      targets: ["ApolloCodegenLib"]),
     .library(
       name: "ApolloSQLite",
       targets: ["ApolloSQLite"]),
-    .library(
-      name: "ApolloWebSocket",
-      targets: ["ApolloWebSocket"]),
+//    .library(
+//      name: "ApolloWebSocket",
+//      targets: ["ApolloWebSocket"]),
   ],
   dependencies: [
     .package(
       url: "https://github.com/stephencelis/SQLite.swift.git",
-      .upToNextMinor(from: "0.13.1"))
+      .upToNextMinor(from: "0.13.2"))
   ],
   targets: [
     .target(
@@ -63,19 +63,19 @@ let package = Package(
       exclude: [
         "Info.plist"
       ]),
-    .target(
-      name: "ApolloCodegenLib",
-      dependencies: [
-        "ApolloUtils",
-      ],
-      exclude: [
-        "Info.plist",
-        "Frontend/JavaScript",
-      ],
-      resources: [
-        .copy("Frontend/dist/ApolloCodegenFrontend.bundle.js"),
-        .copy("Frontend/dist/ApolloCodegenFrontend.bundle.js.map")
-      ]),
+    // .target(
+    //   name: "ApolloCodegenLib",
+    //   dependencies: [
+    //     "ApolloUtils",
+    //   ],
+    //   exclude: [
+    //     "Info.plist",
+    //     "Frontend/JavaScript",
+    //   ],
+    //   resources: [
+    //     .copy("Frontend/dist/ApolloCodegenFrontend.bundle.js"),
+    //     .copy("Frontend/dist/ApolloCodegenFrontend.bundle.js.map")
+    //   ]),
     .target(
       name: "ApolloSQLite",
       dependencies: [
@@ -85,14 +85,14 @@ let package = Package(
       exclude: [
         "Info.plist"
       ]),
-    .target(
-      name: "ApolloWebSocket",
-      dependencies: [
-        "Apollo",
-        "ApolloUtils"
-      ],
-      exclude: [
-        "Info.plist"
-      ])
+    // .target(
+    //   name: "ApolloWebSocket",
+    //   dependencies: [
+    //     "Apollo",
+    //     "ApolloUtils"
+    //   ],
+    //   exclude: [
+    //     "Info.plist"
+    //   ])
   ]
 )
