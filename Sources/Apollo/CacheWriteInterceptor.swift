@@ -64,16 +64,25 @@ public struct CacheWriteInterceptor: ApolloInterceptor {
       }
       
       if let records = records {
-        self.store.publish(records: records, identifier: request.contextIdentifier)
+        self.store.publish(records: records, identifier: request.contextIdentifier) { _ in
+          // We ignore any errors that occure whil notifiying cache observers, because
+          // that shouldn't have any effect on the result of this request
+          // chain.
+          chain.proceedAsync(
+            request: request,
+            response: createdResponse,
+            interceptor: self,
+            completion: completion
+          )
+        }
+      } else {
+        chain.proceedAsync(
+          request: request,
+          response: createdResponse,
+          interceptor: self,
+          completion: completion
+        )
       }
-      
-      chain.proceedAsync(
-        request: request,
-        response: createdResponse,
-        interceptor: self,
-        completion: completion
-      )
-
     } catch {
       chain.handleErrorAsync(
         error,
