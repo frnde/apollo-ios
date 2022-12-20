@@ -62,7 +62,7 @@ class IR {
     let referencedFragments: OrderedSet<NamedFragment>
 
     lazy var operationIdentifier: String = {
-      if #available(macOS 10.15, *) {
+      if #available(macOS 10.15, iOS 13.0, *) {
         var hasher = SHA256()
         func updateHash(with source: inout String) {
           source.withUTF8({ buffer in
