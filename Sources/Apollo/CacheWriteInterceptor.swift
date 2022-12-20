@@ -63,16 +63,19 @@ public struct CacheWriteInterceptor: ApolloInterceptor {
     }
 
     guard !chain.isCancelled else {
-      return
+        return
     }
 
-    self.store.publish(records: cacheRecords, identifier: request.contextIdentifier)
-
-    chain.proceedAsync(
-      request: request,
-      response: createdResponse,
-      interceptor: self,
-      completion: completion
-    )
+    self.store.publish(records: cacheRecords, identifier: request.contextIdentifier) { _ in
+      // We ignore any errors that occure whil notifiying cache observers, because
+      // that shouldn't have any effect on the result of this request
+      // chain.
+      chain.proceedAsync(
+        request: request,
+        response: createdResponse,
+        interceptor: self,
+        completion: completion
+      )
+    }
   }
 }
