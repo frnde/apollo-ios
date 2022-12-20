@@ -3,7 +3,7 @@ import Foundation
 import ApolloAPI
 #endif
 
-public typealias DidChangeKeysFunc = (Set<CacheKey>, UUID?) -> Void
+public typealias DidChangeKeysFunc = (Set<CacheKey>, UUID?, @escaping () -> Void) -> Void
 
 protocol ApolloStoreSubscriber: AnyObject {
   
@@ -15,7 +15,8 @@ protocol ApolloStoreSubscriber: AnyObject {
   ///   - contextIdentifier: [optional] A unique identifier for the request that kicked off this change, to assist in de-duping cache hits for watchers.
   func store(_ store: ApolloStore,
              didChangeKeys changedKeys: Set<CacheKey>,
-             contextIdentifier: UUID?)
+             contextIdentifier: UUID?,
+             completion: @escaping () -> Void)
 }
 
 /// The `ApolloStore` class acts as a local cache for normalized GraphQL results.
@@ -34,9 +35,16 @@ public class ApolloStore {
     self.queue = DispatchQueue(label: "com.apollographql.ApolloStore", attributes: .concurrent)
   }
 
-  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>, identifier: UUID?) {
+  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>, identifier: UUID?, completion: @escaping () -> Void = {}) {
+    let group = DispatchGroup()
     for subscriber in self.subscribers {
-      subscriber.store(self, didChangeKeys: changedKeys, contextIdentifier: identifier)
+      group.enter()
+      subscriber.store(self, didChangeKeys: changedKeys, contextIdentifier: identifier) {
+        group.leave()
+      }
+    }
+    group.notify(queue: queue) {
+      completion()
     }
   }
 
@@ -67,12 +75,13 @@ public class ApolloStore {
     queue.async(flags: .barrier) {
       do {
         let changedKeys = try self.cache.merge(records: records)
-        self.didChangeKeys(changedKeys, identifier: identifier)
-        DispatchQueue.returnResultAsyncIfNeeded(
-          on: callbackQueue,
-          action: completion,
-          result: .success(())
-        )
+        self.didChangeKeys(changedKeys, identifier: identifier) {
+            DispatchQueue.returnResultAsyncIfNeeded(
+                on: callbackQueue,
+                action: completion,
+                result: .success(())
+            )
+        }
       } catch {
         DispatchQueue.returnResultAsyncIfNeeded(
           on: callbackQueue,
@@ -311,7 +320,7 @@ public class ApolloStore {
       loader.removeAll()
 
       if let didChangeKeysFunc = self.updateChangedKeysFunc {
-        didChangeKeysFunc(changedKeys, nil)
+        didChangeKeysFunc(changedKeys, nil) {}
       }
     }
     
@@ -341,6 +350,5 @@ public class ApolloStore {
     public func removeObjects(matching pattern: CacheKey) throws {
       try self.cache.removeRecords(matching: pattern)
     }
-
   }
 }
