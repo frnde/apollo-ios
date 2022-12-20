@@ -87,18 +87,21 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
 
   func store(_ store: ApolloStore,
              didChangeKeys changedKeys: Set<CacheKey>,
-             contextIdentifier: UUID?) {
+             contextIdentifier: UUID?,
+             completion: @escaping () -> Void) {
     if
       let incomingIdentifier = contextIdentifier,
       incomingIdentifier == self.contextIdentifier {
         // This is from changes to the keys made from the `fetch` method above,
         // changes will be returned through that and do not need to be returned
         // here as well.
+        completion()
         return
     }
     
     guard let dependentKeys = self.dependentKeys else {
       // This query has nil dependent keys, so nothing that changed will affect it.
+      completion()
       return
     }
     
@@ -118,14 +121,18 @@ public final class GraphQLQueryWatcher<Query: GraphQLQuery>: Cancellable, Apollo
               $0 = graphQLResult.dependentKeys
             }
             self.resultHandler(result)
+            completion()
           }
         case .failure:
           if self.fetching.cachePolicy != .returnCacheDataDontFetch {
             // If the cache fetch is not successful, for instance if the data is missing, refresh from the server.
             self.fetch(cachePolicy: .fetchIgnoringCacheData)
           }
+          completion()
         }
       }
+    } else {
+      completion()
     }
   }
 }
