@@ -16,7 +16,7 @@ actor AsyncReadWriteLock {
   ///
   /// This function should be `rethrows` but the compiler doesn't understand that when passing the `block` into a Task.
   /// If the `body` provided does not throw, this function will not throw.
-  func write(_ body: @Sendable @escaping () async throws -> Void) async throws {
+  func write<T: Sendable>(_ body: @Sendable @escaping () async throws -> T) async throws -> T {
     switch state {
     case .writing, .reading:
       await addToQueueAndWait(isWriter: true)
@@ -31,7 +31,7 @@ actor AsyncReadWriteLock {
       try await body()
     }
 
-    try await writeTask.value
+    return try await writeTask.value
   }
 
   /// Waits for all current writes to be completed, then calls the provided closure while preventing
@@ -39,7 +39,7 @@ actor AsyncReadWriteLock {
   ///
   /// This function should be `rethrows` but the compiler doesn't understand that when passing the `block` into a Task.
   /// If the `body` provided does not throw, this function will not throw.
-  func read(_ body: @Sendable @escaping () async throws -> Void) async throws {
+  func read<T: Sendable>(_ body: @Sendable @escaping () async throws -> T) async throws -> T {
     switch state {
     case .writing:
       await addToQueueAndWait(isWriter: false)
@@ -63,7 +63,7 @@ actor AsyncReadWriteLock {
       try await body()
     }
 
-    try await readTask.value
+    return try await readTask.value
   }
 
   private func addToQueueAndWait(isWriter: Bool) async {

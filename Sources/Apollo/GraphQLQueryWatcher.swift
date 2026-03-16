@@ -215,7 +215,7 @@ public actor GraphQLQueryWatcher<Query: GraphQLQuery>: ApolloStoreSubscriber {
   public nonisolated func store(
     _ store: ApolloStore,
     didChangeKeys changedKeys: Set<CacheKey>
-  ) {
+  ) async {
     if let incomingIdentifier = QueryWatcherContext.identifier,
       incomingIdentifier == self.contextIdentifier
     {
@@ -225,39 +225,40 @@ public actor GraphQLQueryWatcher<Query: GraphQLQuery>: ApolloStoreSubscriber {
       return
     }
 
-    Task {
-      await self.doOnActor { (self) in
-        guard !self.cancelled else { return }
-        guard let dependentKeys = self.dependentKeys else {
-          // This query has nil dependent keys, so nothing that changed will affect it.
-          return
+    // Directly await actor work instead of spawning a fire-and-forget Task.
+    // This ensures store.publish() (and thus the mutation completion handler)
+    // does not return until this watcher has finished reloading from the cache.
+    await doOnActor { (self) in
+      guard !self.cancelled else { return }
+      guard let dependentKeys = self.dependentKeys else {
+        // This query has nil dependent keys, so nothing that changed will affect it.
+        return
+      }
+
+      let cacheReadFailed = {
+        if self.refetchOnFailedUpdates && self.lastFetch?.fetchBehavior.networkFetch != .never {
+          // If the cache fetch is not successful, for instance if the data is missing, refresh from the server.
+          self.fetch(
+            fetchBehavior: FetchBehavior.NetworkOnly,
+            requestConfiguration: self.lastFetch?.requestConfiguration
+          )
         }
+      }
 
-        let cacheReadFailed = {
-          if self.refetchOnFailedUpdates && self.lastFetch?.fetchBehavior.networkFetch != .never {
-            // If the cache fetch is not successful, for instance if the data is missing, refresh from the server.
-            self.fetch(
-              fetchBehavior: FetchBehavior.NetworkOnly,
-              requestConfiguration: self.lastFetch?.requestConfiguration
-            )
-          }
-        }
-
-        if !dependentKeys.isDisjoint(with: changedKeys) {
-          do {
-            // First, attempt to reload the query from the cache directly, in order not to interrupt any
-            // in-flight server-side fetch.
-            guard let result = try await store.load(self.query) else {
-              cacheReadFailed()
-              return
-            }
-            
-            self.dependentKeys = result.dependentKeys
-            self.didReceiveResult(result)
-
-          } catch {
+      if !dependentKeys.isDisjoint(with: changedKeys) {
+        do {
+          // First, attempt to reload the query from the cache directly, in order not to interrupt any
+          // in-flight server-side fetch.
+          guard let result = try await store.load(self.query) else {
             cacheReadFailed()
+            return
           }
+
+          self.dependentKeys = result.dependentKeys
+          self.didReceiveResult(result)
+
+        } catch {
+          cacheReadFailed()
         }
       }
     }

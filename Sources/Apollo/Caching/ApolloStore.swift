@@ -10,7 +10,7 @@ public protocol ApolloStoreSubscriber: AnyObject, Sendable {
   /// - Parameters:
   ///   - store: The ``ApolloStore`` which made the changes
   ///   - changedKeys: The set of changed keys
-  func store(_ store: ApolloStore, didChangeKeys changedKeys: Set<CacheKey>)
+  func store(_ store: ApolloStore, didChangeKeys changedKeys: Set<CacheKey>) async
 }
 
 /// The ``ApolloStore`` class manages access to a local cache for reading/writing normalized GraphQL results.
@@ -52,9 +52,22 @@ public final class ApolloStore: Sendable {
     self.cache = cache
   }
 
-  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>) {
-    for subscriber in self.subscribers.values {
-      subscriber.store(self, didChangeKeys: changedKeys)
+  fileprivate func didChangeKeys(_ changedKeys: Set<CacheKey>) async {
+    // Snapshot subscribers outside the write lock to prevent deadlock when
+    // subscribers call store.load() which needs a read lock.
+    do  {
+      let currentSubscribers: [any ApolloStoreSubscriber] = try await readerWriterLock.read {
+        Array(self.subscribers.values)
+      }
+      await withTaskGroup(of: Void.self) { group in
+        for subscriber in currentSubscribers {
+          group.addTask {
+            await subscriber.store(self, didChangeKeys: changedKeys)
+          }
+        }
+      }
+    } catch {
+      // nothing to do
     }
   }
 
@@ -70,10 +83,12 @@ public final class ApolloStore: Sendable {
   /// - Parameters:
   ///   - records: The records to be merged into the cache.
   public func publish(records: RecordSet) async throws {
-    try await readerWriterLock.write {
-      let changedKeys = try await self.cache.merge(records: records)
-      self.didChangeKeys(changedKeys)
+    let changedKeys = try await readerWriterLock.write {
+      try await self.cache.merge(records: records)
     }
+    // Notify subscribers AFTER releasing the write lock so that subscribers
+    // can call store.load() (which needs a read lock) without deadlocking.
+    await didChangeKeys(changedKeys)
   }
 
   /// Subscribes to notifications for changes to the store's cache data.
@@ -111,11 +126,9 @@ public final class ApolloStore: Sendable {
   public func withinReadTransaction<T: Sendable>(
     _ body: @Sendable @escaping (ReadTransaction) async throws -> T
   ) async throws -> T {
-    nonisolated(unsafe) var value: T!
     try await readerWriterLock.read {
-      value = try await body(ReadTransaction(store: self))
+      try await body(ReadTransaction(store: self))
     }
-    return value
   }
 
   /// Performs an operation within a read/write transaction
@@ -127,9 +140,14 @@ public final class ApolloStore: Sendable {
   public func withinReadWriteTransaction<T: Sendable>(
     _ body: @Sendable @escaping (ReadWriteTransaction) async throws -> T
   ) async throws -> T {
-    nonisolated(unsafe) var value: T!
-    try await readerWriterLock.write {
-      value = try await body(ReadWriteTransaction(store: self))
+    let (value, accumulatedChangedKeys) = try await readerWriterLock.write {
+      let transaction = ReadWriteTransaction(store: self)
+      return try await(body(transaction), transaction.accumulatedChangedKeys)
+    }
+    // Notify subscribers AFTER releasing the write lock so that subscribers
+    // can call store.load() (which needs a read lock) without deadlocking.
+    if !accumulatedChangedKeys.isEmpty {
+      await didChangeKeys(accumulatedChangedKeys)
     }
     return value
   }
@@ -296,10 +314,12 @@ public final class ApolloStore: Sendable {
     /// It is safe to directly operate on the raw record data of the cache from within the transaction block.
     public var cache: any NormalizedCache { _cache }
     
-    fileprivate var updateChangedKeysFunc: ((Set<CacheKey>) -> Void)?
+    /// Accumulates all cache keys changed during this transaction. These keys are used by
+    /// ``ApolloStore/withinReadWriteTransaction(_:)`` to notify subscribers *after* the write
+    /// lock is released, avoiding deadlocks when subscribers call ``ApolloStore/load(_:)``.
+    fileprivate var accumulatedChangedKeys: Set<CacheKey> = []
 
     override init(store: ApolloStore) {
-      self.updateChangedKeysFunc = store.didChangeKeys
       super.init(store: store)
     }
 
@@ -415,9 +435,7 @@ public final class ApolloStore: Sendable {
       // within the same transaction will reload the updated value.
       loader.removeAll()
 
-      if let didChangeKeysFunc = self.updateChangedKeysFunc {
-        didChangeKeysFunc(changedKeys)
-      }
+      accumulatedChangedKeys.formUnion(changedKeys)
     }
 
     /// Removes the object for the specified cache key from the transaction's underlying cache.
